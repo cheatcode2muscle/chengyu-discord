@@ -440,17 +440,35 @@ const alreadyCompleted =
   }, []);
 
   const [board, setBoard] = useState(
-    JSON.parse(LS.getItem(`${KEY_PREFIX}${currentGame.id}`))?.board ||
-      blankBoard(),
-  );
+  JSON.parse(
+    LS.getItem(
+      `${KEY_PREFIX}${currentGame.id}`
+    )
+  )?.board || blankBoard()
+);
+
   useEffect(() => {
-    const cachedGame = LS.getItem(`${KEY_PREFIX}${currentGame.id}`);
-    if (cachedGame) {
-      setBoard(JSON.parse(cachedGame).board);
-    } else {
-      setBoard(blankBoard());
-    }
-  }, [currentGame.id]);
+  // RANDOM / CHOOSE should always start fresh
+  if (practiceGameId === currentGame.id) {
+    setBoard(blankBoard());
+    return;
+  }
+
+  const cachedGame = LS.getItem(
+    `${KEY_PREFIX}${currentGame.id}`
+  );
+
+  if (cachedGame) {
+    setBoard(
+      JSON.parse(cachedGame).board
+    );
+  } else {
+    setBoard(blankBoard());
+  }
+}, [
+  currentGame.id,
+  practiceGameId,
+]);
 
   useEffect(() => {
   if (!serverResult) return;
@@ -502,7 +520,7 @@ const alreadyCompleted =
       }
       return [];
     });
-  }, [board]);
+  }, [board, currentGame.idiom]);
 
 
   // Save to localStorage every time board changes
@@ -1667,20 +1685,25 @@ const getMedal = (index) => {
 }
 
 setPracticeGameId(game.id);
+savedResultRef.current = null;
 
 LS.removeItem(
   `${KEY_PREFIX}${game.id}`
 );
 
+// Force a completely fresh board
+setBoard(blankBoard());
+
+// Force game to switch immediately
+setCurrentGame(game);
+
 location.hash = `#${game.id}`;
 
-        location.hash = `#${game.id}`;
+setChooseId('');
+setChooseError(false);
+setShowModal(null);
 
-        setChooseId('');
-        setChooseError(false);
-        setShowModal(null);
-
-        fireEvent('Game load: Idiom ID');
+fireEvent('Game load: Idiom ID')
       }}
     >
       <PlayIcon
@@ -1865,7 +1888,7 @@ location.hash = `#${game.id}`;
               )}
               <button
                 type="button"
-                onClick={() => {
+onClick={() => {
   fireEvent('Click: Random');
 
   const rand = Math.floor(
@@ -1874,11 +1897,21 @@ location.hash = `#${game.id}`;
 
   const randGame = GAMES[rand];
 
+  // Mark it as a fresh practice game
   setPracticeGameId(randGame.id);
+  
+  savedResultRef.current = null;
 
-LS.removeItem(
-  `${KEY_PREFIX}${randGame.id}`
-);
+  // Remove old local progress
+  LS.removeItem(
+    `${KEY_PREFIX}${randGame.id}`
+  );
+
+  // IMPORTANT: reset immediately
+  setBoard(blankBoard());
+
+  // Switch game immediately
+  setCurrentGame(randGame);
 
   location.hash = `#${randGame.id}`;
 
