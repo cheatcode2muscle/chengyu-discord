@@ -45,6 +45,13 @@ import fireEvent from './utils/fireEvent';
 import prefersColorSchemeSupported from './utils/prefersColorSchemeSupported';
 import usePageVisibility from './utils/usePageVisibility';
 
+import {
+  discordAuth,
+  discordAccessToken,
+  discordSdk,
+  discordPlayer as cachedDiscordPlayer,
+} from './discord';
+
 const py = pinyin;
 window.pinyin = pinyin;
 
@@ -58,8 +65,10 @@ const MIN_IDIOMS = HARD_MODE ? 10 : 6;
 if (HARD_MODE) {
   fireEvent('Hard mode');
 }
-
-const ALL_IDIOMS = idiomsTxt.split('\n');
+const ALL_IDIOMS = idiomsTxt
+  .split(/\r?\n/)
+  .map((idiom) => idiom.trim())
+  .filter(Boolean);
 const GAMES = gameIdioms.slice(1).map((row) => ({
   id: row[0],
   idiom: row[1],
@@ -308,6 +317,65 @@ const IdiomsDashboard = () => {
 
 export function App() {
   const { t, i18n } = useTranslation();
+  const isDiscordActivity =
+  window.self !== window.top;
+  const [discordUser, setDiscordUser] = useState(
+  discordAuth?.user || null
+);
+  const [discordPlayer, setDiscordPlayer] =
+  useState(cachedDiscordPlayer || null);
+  const [
+  discordProgressLoaded,
+  setDiscordProgressLoaded,
+] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [leaderboard, setLeaderboard] = useState(null);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+
+useEffect(() => {
+  const handleDiscordAuth = (event) => {
+    setDiscordUser(event.detail.user);
+  };
+
+  const handleDiscordPlayerLoaded = (event) => {
+    console.log(
+      '⚡ Player received from Discord setup:',
+      event.detail
+    );
+
+    setDiscordPlayer(event.detail);
+    setDiscordProgressLoaded(true);
+  };
+
+  window.addEventListener(
+    'discord-authenticated',
+    handleDiscordAuth
+  );
+
+  window.addEventListener(
+    'discord-player-loaded',
+    handleDiscordPlayerLoaded
+  );
+
+  // Safety in case the player loaded before
+  // this effect registered its event listener.
+  if (cachedDiscordPlayer) {
+    setDiscordPlayer(cachedDiscordPlayer);
+    setDiscordProgressLoaded(true);
+  }
+
+  return () => {
+    window.removeEventListener(
+      'discord-authenticated',
+      handleDiscordAuth
+    );
+
+    window.removeEventListener(
+      'discord-player-loaded',
+      handleDiscordPlayerLoaded
+    );
+  };
+}, []);
 
   const [showDashboard, setShowDashboard] = useState(false);
   const [showError, setShowError] = useState(false);
@@ -347,6 +415,18 @@ export function App() {
     });
   }, []);
 
+  const serverResult =
+  discordPlayer?.results?.[currentGame.id] || null;
+
+  const serverGameState =
+  serverResult?.result === 'won' ||
+  serverResult?.result === 'lost'
+    ? serverResult.result
+    : null;
+
+const alreadyCompleted =
+  Boolean(serverGameState);
+
   useEffect(() => {
     keypressStandard.load();
     keypressDelete.load();
@@ -366,6 +446,49 @@ export function App() {
     }
   }, [currentGame.id]);
 
+  useEffect(() => {
+  if (!serverResult) return;
+
+  const savedBoard = serverResult.board;
+
+  if (
+    !Array.isArray(savedBoard) ||
+    savedBoard.length !== MAX_STEPS
+  ) {
+    return;
+  }
+
+  const validBoard = savedBoard.every(
+    (row) =>
+      row &&
+      Array.isArray(row.v) &&
+      row.v.length === MAX_LETTERS &&
+      typeof row.s === 'boolean'
+  );
+
+  if (!validBoard) return;
+
+  const restoredBoard = savedBoard.map((row) => ({
+    v: [...row.v],
+    s: row.s,
+  }));
+
+  console.log(
+    '📥 Restoring board from Discord:',
+    restoredBoard
+  );
+
+  setBoard(restoredBoard);
+
+  LS.setItem(
+    `${KEY_PREFIX}${currentGame.id}`,
+    JSON.stringify({
+      board: restoredBoard,
+      gameState: serverResult.result,
+    })
+  );
+}, [serverResult, currentGame.id]);
+
   const boardStates = useMemo(() => {
     return board.map((row, i) => {
       if (row.s) {
@@ -374,6 +497,7 @@ export function App() {
       return [];
     });
   }, [board]);
+
 
   // Save to localStorage every time board changes
   useEffect(() => {
@@ -453,8 +577,11 @@ export function App() {
   }, [currentGame.idiom]);
 
   const handleLetter = (letter, overwrite = false) => {
-    if (!board[currentStep]) return;
-    if (gameState) return;
+  if (!board[currentStep]) return;
+
+  if (gameplayLocked) {
+    return;
+  }
     setShowError(false);
 
     const newBoard = [...board];
@@ -490,7 +617,9 @@ export function App() {
   });
 
   const handleEnter = () => {
-    if (gameState) return;
+  if (gameplayLocked) {
+    return;
+  }
     console.log('handleEnter');
     setShowError(false);
 
@@ -510,8 +639,126 @@ export function App() {
   };
 
   const gameState = useMemo(() => {
-    return getBoardGameState(boardStates);
-  }, [boardStates]);
+  return getBoardGameState(boardStates);
+}, [boardStates]);
+
+const localGameState = gameState;
+
+const waitingForDiscordPlayer =
+  isDiscordActivity &&
+  !discordProgressLoaded;
+
+const gameplayLocked =
+  Boolean(gameState) ||
+  waitingForDiscordPlayer ||
+  alreadyCompleted;
+
+  const savedResultRef = useRef(null);
+
+useEffect(() => {
+  // Game hasn't ended
+  if (!gameState) return;
+
+  // Not authenticated through Discord
+  if (!discordUser) return;
+
+  if (!discordAccessToken) return;
+
+  const serverHasFullBoard =
+  Array.isArray(serverResult?.board) &&
+  serverResult.board.length === MAX_STEPS &&
+  serverResult.board.some((row) => row?.s);
+
+if (
+  serverResult &&
+  (serverHasFullBoard || !localGameState)
+) {
+  savedResultRef.current = currentGame.id;
+  return;
+}
+
+  // Already attempted to save this puzzle
+  if (savedResultRef.current === currentGame.id) {
+    return;
+  }
+
+  savedResultRef.current = currentGame.id;
+
+  const submittedRows = board.filter(
+    (row) => row.s
+  ).length;
+
+  const now = new Date();
+
+const dailyDate = [
+  now.getFullYear(),
+  String(now.getMonth() + 1).padStart(2, '0'),
+  String(now.getDate()).padStart(2, '0'),
+].join('-');
+
+const isDaily =
+  currentGame.id === getTodayGame().id;
+
+  fetch('/api/result', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+
+    body: JSON.stringify({
+      accessToken: discordAccessToken,
+      channelId: discordSdk?.channelId,
+      guildId: discordSdk?.guildId,
+      gameId: currentGame.id,
+      result: gameState,
+      attempts:
+        gameState === 'won'
+          ? submittedRows
+          : null,
+      isDaily,
+      dailyDate,
+      board,
+      boardStates,
+    }),
+  })
+    .then(async (response) => {
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || 'Failed to save result'
+        );
+      }
+
+      return data;
+    })
+    .then((data) => {
+  console.log(
+    '✅ Game result saved:',
+    data
+  );
+
+  if (data.player) {
+    setDiscordPlayer(data.player);
+  }
+})
+    .catch((error) => {
+      console.error(
+        '❌ Failed to save game result:',
+        error
+      );
+
+      // Allow another attempt to save
+      savedResultRef.current = null;
+    });
+}, [
+  gameState,
+  localGameState,
+  serverResult,
+  currentGame.id,
+  discordUser,
+  board,
+]);
 
   useEffect(() => {
     let timeout;
@@ -555,27 +802,35 @@ export function App() {
   }, [isPageVisible, gameState]);
 
   const handleBackspace = () => {
-    if (gameState) return;
-    const newBoard = [...board];
-    // Get last column with value
-    const row = newBoard[currentStep];
-    if (!row || row.s) return;
-    let columnIndex = -1;
-    for (let i = row.v.length - 1; i >= 0; i--) {
-      if (row.v[i] !== '') {
-        columnIndex = i;
-        break;
-      }
+  if (gameplayLocked) {
+    return;
+  }
+
+  const newBoard = [...board];
+
+  // Get last column with value
+  const row = newBoard[currentStep];
+
+  if (!row || row.s) return;
+
+  let columnIndex = -1;
+
+  for (let i = row.v.length - 1; i >= 0; i--) {
+    if (row.v[i] !== '') {
+      columnIndex = i;
+      break;
     }
-    if (columnIndex !== -1) {
-      row.v[columnIndex] = '';
-      setBoard(newBoard);
-    }
-  };
+  }
+
+  if (columnIndex !== -1) {
+    row.v[columnIndex] = '';
+    setBoard(newBoard);
+  }
+};
 
   useEffect(() => {
     const handleKey = (e) => {
-      if (gameState) return;
+      if (gameplayLocked) return;
       if (e.metaKey || e.ctrlKey || !e.key) {
         return;
       }
@@ -659,7 +914,7 @@ export function App() {
     return () => {
       document.removeEventListener('keydown', handleKey);
     };
-  }, [currentGameKeys, currentGameKeysPinyin, board, currentStep, gameState]);
+  }, [currentGameKeys, currentGameKeysPinyin, board, currentStep, gameState, gameplayLocked,]);
 
   const permalink = location.origin + location.pathname + '#' + currentGame.id;
   const shortPermalink =
@@ -735,7 +990,7 @@ export function App() {
     hintIndex.current = 0;
   }, [currentGame.idiom]);
   const showHint = () => {
-    if (gameState) return;
+    if (gameplayLocked) return;
     const hint = hints[hintIndex.current];
     hintIndex.current = (hintIndex.current + 1) % hints.length;
     alert(hint);
@@ -801,6 +1056,53 @@ export function App() {
     [gamesPlayedCount],
   );
 
+  const openLeaderboard = async () => {
+  setShowLeaderboard(true);
+  setLeaderboardLoading(true);
+
+  try {
+    const guildId = discordSdk?.guildId;
+
+    if (!guildId) {
+      throw new Error('No Discord guild ID available');
+    }
+
+    const response = await fetch(
+      `/api/leaderboard?guildId=${encodeURIComponent(
+        guildId
+      )}&gameId=${encodeURIComponent(currentGame.id)}`
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error || 'Failed to load leaderboard'
+      );
+    }
+
+    setLeaderboard(data);
+  } catch (error) {
+    console.error('Leaderboard error:', error);
+  } finally {
+    setLeaderboardLoading(false);
+  }
+};
+
+const getDiscordAvatar = (player) => {
+  if (!player.avatar) return null;
+
+  return `https://cdn.discordapp.com/avatars/${player.userId}/${player.avatar}.png?size=64`;
+};
+
+const getMedal = (index) => {
+  if (index === 0) return '🥇';
+  if (index === 1) return '🥈';
+  if (index === 2) return '🥉';
+
+  return `${index + 1}.`;
+};
+
   return (
     <>
       <header>
@@ -831,6 +1133,359 @@ export function App() {
           </button>
         </div>
       </header>
+
+      {discordUser && (
+  <div
+    style={{
+      textAlign: 'center',
+      margin: '8px',
+      fontSize: '14px',
+    }}
+  >
+    Playing as {discordUser.username}
+
+    <button
+      type="button"
+      onClick={openLeaderboard}
+      style={{
+        marginLeft: '12px',
+        cursor: 'pointer',
+      }}
+    >
+      🏆 Leaderboard
+    </button>
+  </div>
+)}
+
+{showLeaderboard && (
+  <div
+    style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0, 0, 0, 0.75)',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 9999,
+    }}
+    onClick={(e) => {
+      if (e.target === e.currentTarget) {
+        setShowLeaderboard(false);
+      }
+    }}
+  >
+    <div
+      style={{
+        background: '#1e1f22',
+        color: 'white',
+        padding: '24px',
+        borderRadius: '12px',
+        width: '90%',
+        maxWidth: '420px',
+        maxHeight: '80vh',
+        overflowY: 'auto',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <h2>🏆 Leaderboard</h2>
+
+        <button
+          type="button"
+          onClick={() => setShowLeaderboard(false)}
+        >
+          ✕
+        </button>
+      </div>
+
+      {leaderboardLoading && (
+        <p>Loading leaderboard...</p>
+      )}
+
+      {!leaderboardLoading && leaderboard && (
+        <>
+          <h3>Today's Chengyu</h3>
+
+          {leaderboard.daily.length === 0 ? (
+  <p>No completed games yet.</p>
+) : (
+  leaderboard.daily.map((player, index) => {
+    const isMe = player.userId === discordUser?.id;
+    const avatarUrl = getDiscordAvatar(player);
+
+    return (
+      <div
+        key={player.userId}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px',
+          marginBottom: '6px',
+          borderRadius: '8px',
+          background: isMe
+            ? 'rgba(88, 101, 242, 0.25)'
+            : '#2b2d31',
+          border: isMe
+            ? '1px solid #5865F2'
+            : '1px solid transparent',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+          }}
+        >
+          <span
+            style={{
+              width: '28px',
+              textAlign: 'center',
+              fontSize: '18px',
+            }}
+          >
+            {getMedal(index)}
+          </span>
+
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt=""
+              width="34"
+              height="34"
+              style={{
+                borderRadius: '50%',
+              }}
+            />
+          ) : (
+            <div
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                background: '#5865F2',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                fontWeight: 'bold',
+              }}
+            >
+              {(player.displayName || player.username)
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+          )}
+
+          <div
+            style={{
+              textAlign: 'left',
+            }}
+          >
+            <div
+              style={{
+                fontWeight: '600',
+              }}
+            >
+              {player.displayName || player.username}
+
+              {isMe && (
+                <span
+                  style={{
+                    marginLeft: '6px',
+                    fontSize: '11px',
+                    opacity: 0.7,
+                  }}
+                >
+                  YOU
+                </span>
+              )}
+            </div>
+
+            {player.displayName &&
+              player.displayName !== player.username && (
+                <div
+                  style={{
+                    fontSize: '11px',
+                    opacity: 0.6,
+                  }}
+                >
+                  @{player.username}
+                </div>
+              )}
+          </div>
+        </div>
+
+        <strong
+          style={{
+            fontSize: '16px',
+          }}
+        >
+          {player.result === 'won'
+            ? `${player.attempts}/6`
+            : 'X/6'}
+        </strong>
+      </div>
+    );
+  })
+)}
+
+          <hr />
+
+          <h3>🔥 Current Streaks</h3>
+
+          {leaderboard.streaks.map((player, index) => {
+  const isMe = player.userId === discordUser?.id;
+  const avatarUrl = getDiscordAvatar(player);
+
+  const winRate =
+    player.gamesPlayed > 0
+      ? Math.round(
+          (player.wins / player.gamesPlayed) * 100
+        )
+      : 0;
+
+  return (
+    <div
+      key={player.userId}
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '10px',
+        marginBottom: '6px',
+        borderRadius: '8px',
+        background: isMe
+          ? 'rgba(88, 101, 242, 0.25)'
+          : '#2b2d31',
+        border: isMe
+          ? '1px solid #5865F2'
+          : '1px solid transparent',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}
+      >
+        <span
+          style={{
+            width: '28px',
+            textAlign: 'center',
+            fontSize: '18px',
+          }}
+        >
+          {getMedal(index)}
+        </span>
+
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt=""
+            width="34"
+            height="34"
+            style={{
+              borderRadius: '50%',
+            }}
+          />
+        ) : (
+          <div
+            style={{
+              width: '34px',
+              height: '34px',
+              borderRadius: '50%',
+              background: '#5865F2',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              fontWeight: 'bold',
+            }}
+          >
+            {(player.displayName || player.username)
+              .charAt(0)
+              .toUpperCase()}
+          </div>
+        )}
+
+        <div
+          style={{
+            textAlign: 'left',
+          }}
+        >
+          <div
+            style={{
+              fontWeight: '600',
+            }}
+          >
+            {player.displayName || player.username}
+
+            {isMe && (
+              <span
+                style={{
+                  marginLeft: '6px',
+                  fontSize: '11px',
+                  opacity: 0.7,
+                }}
+              >
+                YOU
+              </span>
+            )}
+          </div>
+
+          <div
+            style={{
+              fontSize: '11px',
+              opacity: 0.65,
+              marginTop: '2px',
+            }}
+          >
+            {player.wins || 0}/{player.gamesPlayed || 0} wins
+            {' · '}
+            {winRate}% win rate
+          </div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          textAlign: 'right',
+        }}
+      >
+        <strong
+          style={{
+            fontSize: '16px',
+          }}
+        >
+          🔥 {player.currentStreak || 0}
+        </strong>
+
+        <div
+          style={{
+            fontSize: '11px',
+            opacity: 0.65,
+            marginTop: '2px',
+          }}
+        >
+          Best: {player.bestStreak || 0}
+        </div>
+      </div>
+    </div>
+  );
+})}
+    </>
+      )}
+    </div>
+  </div>
+)}
+         
+
       <div id="board" class={`${gameState} ${HARD_MODE ? 'hard-mode' : ''}`}>
         {board.map((row, index) => {
           const pinyins = pinyin(row.v.join(''), { type: 'array' });

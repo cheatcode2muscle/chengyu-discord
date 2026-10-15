@@ -2,6 +2,9 @@ node_modules
 .DS_Store
 dist
 dist-ssr
+.env.local
+players.json
+players-backup.json
 *.local
 test-results/
 playwright-report/

@@ -13,11 +13,16 @@
     "e2e-test-watch": "npx playwright-watch test"
   },
   "dependencies": {
+    "@discord/embedded-app-sdk": "^2.5.0",
     "@fontsource/nunito": "~4.5.4",
+    "@upstash/redis": "^1.39.0",
     "@vitejs/plugin-legacy": "~1.7.1",
     "canvas-confetti": "~1.5.1",
     "copee": "~1.0.6",
     "core-js": "~3.21.1",
+    "discord-interactions": "^4.4.0",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
     "howler": "~2.2.3",
     "html-to-image": "~1.9.0",
     "i18next": "~21.6.13",
@@ -27,6 +32,7 @@
     "rc-switch": "~3.2.2",
     "react-hot-toast": "~2.2.0",
     "react-i18next": "~11.15.5",
+    "sharp": "^0.35.5",
     "unfetch": "~4.2.0"
   },
   "devDependencies": {

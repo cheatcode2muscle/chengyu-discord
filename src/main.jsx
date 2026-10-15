@@ -13,6 +13,7 @@ import en from '../i18n/en.json';
 import zhCN from '../i18n/zh-CN.json';
 
 import { App } from './app';
+import { setupDiscord } from './discord';
 
 i18n
   .use(LanguageDetector)
@@ -40,15 +41,26 @@ i18n
   .then((t) => {
     const updateLocale = () => {
       document.documentElement.lang = i18n.resolvedLanguage;
+
       document.title = document.querySelector(
         'meta[property="og:title"]',
       ).content = t('app.title');
-      document.querySelector('meta[name="description"]').content =
-        document.querySelector('meta[property="og:description"]').content =
-          t('app.description');
+
+      document.querySelector(
+        'meta[name="description"]',
+      ).content =
+        document.querySelector(
+          'meta[property="og:description"]',
+        ).content = t('app.description');
     };
-    i18n.on('languageChanged', updateLocale);
+
+    i18n.on(
+      'languageChanged',
+      updateLocale,
+    );
+
     updateLocale();
   });
 
 render(<App />, document.getElementById('app'));
+setupDiscord();
