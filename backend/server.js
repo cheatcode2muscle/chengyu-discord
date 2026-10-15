@@ -1,7 +1,32 @@
 const express = require('express');
 const dotenv = require('dotenv');
-const sharp = require('sharp');
 const { Redis } = require('@upstash/redis');
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const fontDirectory = path.join(__dirname, 'fonts');
+
+const fontConfigPath = path.join(
+  os.tmpdir(),
+  'chengyu-fonts.conf'
+);
+
+fs.writeFileSync(
+  fontConfigPath,
+  `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>${fontDirectory}</dir>
+  <cachedir>/tmp/chengyu-font-cache</cachedir>
+</fontconfig>`
+);
+
+process.env.FONTCONFIG_FILE = fontConfigPath;
+
+const sharp = require('sharp');
+
 const {
   InteractionType,
   InteractionResponseType,
@@ -173,17 +198,31 @@ async function generateChengyuResultCard({
   gameId,
   players,
 }) {
-  const cardWidth = 640;
-  const cardHeight = 430;
+  const visiblePlayers = players.slice(0, 4);
+
+  const cardWidth = 900;
+  const cardHeight = visiblePlayers.length <= 2 ? 460 : 760;
+
+  const slotPositions =
+    visiblePlayers.length <= 2
+      ? [
+          { x: 170, y: 120 },
+          { x: 470, y: 120 },
+        ]
+      : [
+          { x: 140, y: 120 },
+          { x: 500, y: 120 },
+          { x: 140, y: 420 },
+          { x: 500, y: 420 },
+        ];
 
   const preparedPlayers = await Promise.all(
-    players.slice(0, 2).map(async (player) => {
+    visiblePlayers.map(async (player) => {
       const avatarUrl = player.avatar
-        ? `https://cdn.discordapp.com/avatars/${player.userId}/${player.avatar}.png?size=256`
+        ? `https://cdn.discordapp.com/avatars/${player.userId}/${player.avatar}.png?size=128`
         : null;
 
-      const avatarDataUri =
-        await fetchImageAsDataUri(avatarUrl);
+      const avatarDataUri = await fetchImageAsDataUri(avatarUrl);
 
       return {
         ...player,
@@ -192,91 +231,52 @@ async function generateChengyuResultCard({
     })
   );
 
-  const playerCount = preparedPlayers.length;
-
-  const playerWidth = 185;
-  const playerHeight = 300;
-  const playerY = 92;
-
-  const playerXs =
-    playerCount === 1
-      ? [
-          (cardWidth - playerWidth) / 2,
-        ]
-      : [
-          105,
-          cardWidth - 105 - playerWidth,
-        ];
-
-  const playerColumnsSvg = preparedPlayers
+  const playerCardsSvg = preparedPlayers
     .map((player, index) => {
-      const x = playerXs[index];
+      const pos = slotPositions[index];
+      const x = pos.x;
+      const y = pos.y;
 
-      const avatarCenterX =
-        x + playerWidth / 2;
+      const score = getScoreText(player.gameResult);
 
-      const avatarCenterY =
-        playerY + 48;
+      const avatarCx = x + 70;
+      const avatarCy = y + 36;
 
-      const boardWidth =
-        4 * 25 + 3 * 4;
-
-      const boardX =
-        x +
-        (playerWidth - boardWidth) / 2;
-
-      const boardY =
-        playerY + 122;
-
-      const score =
-        getScoreText(player.gameResult);
-
-      const playerName =
-        player.displayName ||
-        player.username ||
-        'Player';
+      const boardX = x + 18;
+      const boardY = y + 95;
 
       const avatarPart = player.avatarDataUri
         ? `
-          <defs>
-            <clipPath id="avatarClip${index}">
-              <circle
-                cx="${avatarCenterX}"
-                cy="${avatarCenterY}"
-                r="37"
-              />
-            </clipPath>
-          </defs>
-
+          <clipPath id="avatarClip${index}">
+            <circle cx="${avatarCx}" cy="${avatarCy}" r="32" />
+          </clipPath>
           <image
             href="${player.avatarDataUri}"
-            x="${avatarCenterX - 37}"
-            y="${avatarCenterY - 37}"
-            width="74"
-            height="74"
+            x="${avatarCx - 32}"
+            y="${avatarCy - 32}"
+            width="64"
+            height="64"
             clip-path="url(#avatarClip${index})"
             preserveAspectRatio="xMidYMid slice"
           />
         `
         : `
           <circle
-            cx="${avatarCenterX}"
-            cy="${avatarCenterY}"
-            r="37"
+            cx="${avatarCx}"
+            cy="${avatarCy}"
+            r="32"
             fill="#5865F2"
           />
-
           <text
-            x="${avatarCenterX}"
-            y="${avatarCenterY + 11}"
+            x="${avatarCx}"
+            y="${avatarCy + 10}"
             text-anchor="middle"
-            font-family="Arial, sans-serif"
-            font-size="32"
+            font-size="24"
             font-weight="700"
             fill="#ffffff"
           >
             ${escapeXml(
-              playerName
+              (player.displayName || player.username || '?')
                 .charAt(0)
                 .toUpperCase()
             )}
@@ -284,39 +284,39 @@ async function generateChengyuResultCard({
         `;
 
       return `
+        <rect
+          x="${x}"
+          y="${y}"
+          width="170"
+          height="250"
+          rx="24"
+          fill="#111214"
+          stroke="#2f3336"
+          stroke-width="2"
+        />
+
         ${avatarPart}
 
         <text
-          x="${avatarCenterX}"
-          y="${playerY + 105}"
+          x="${x + 85}"
+          y="${y + 82}"
           text-anchor="middle"
-          font-family="Arial, sans-serif"
-          font-size="17"
+          font-size="16"
           font-weight="700"
           fill="#ffffff"
         >
-          ${escapeXml(playerName)}
+          ${escapeXml(player.displayName || player.username)}
         </text>
 
-        <g
-          transform="translate(
-            ${boardX},
-            ${boardY}
-          )"
-        >
-          ${
-            renderBoardSvg(
-              player.gameResult.boardStates || []
-            )
-          }
+        <g transform="translate(${boardX}, ${boardY})">
+          ${renderBoardSvg(player.gameResult.boardStates || [])}
         </g>
 
         <text
-          x="${avatarCenterX}"
-          y="${playerY + 284}"
+          x="${x + 85}"
+          y="${y + 220}"
           text-anchor="middle"
-          font-family="Arial, sans-serif"
-          font-size="25"
+          font-size="22"
           font-weight="700"
           fill="#ffffff"
         >
@@ -327,31 +327,31 @@ async function generateChengyuResultCard({
     .join('\n');
 
   const svg = `
-    <svg
-      width="${cardWidth}"
-      height="${cardHeight}"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect
-        width="${cardWidth}"
-        height="${cardHeight}"
-        rx="26"
-        fill="#191a1d"
-      />
+    <svg width="${cardWidth}" height="${cardHeight}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#111214" rx="28" />
 
       <text
         x="${cardWidth / 2}"
-        y="52"
+        y="60"
         text-anchor="middle"
-        font-family="Arial, sans-serif"
-        font-size="25"
+        font-size="30"
         font-weight="700"
         fill="#ffffff"
       >
         Chengyu No. ${escapeXml(gameId)}
       </text>
 
-      ${playerColumnsSvg}
+      <text
+        x="${cardWidth / 2}"
+        y="95"
+        text-anchor="middle"
+        font-size="18"
+        fill="#b5bac1"
+      >
+        ${preparedPlayers.length} player${preparedPlayers.length > 1 ? 's' : ''} completed this Chengyu
+      </text>
+
+      ${playerCardsSvg}
     </svg>
   `;
 
@@ -428,9 +428,8 @@ const cardBuffer =
         ? 'PATCH'
         : 'POST';
 
-    const url = existingMessageId
-      ? `https://discord.com/api/v10/channels/${channelId}/messages/${existingMessageId}`
-      : `https://discord.com/api/v10/channels/${channelId}/messages`;
+    const url =
+  `https://discord.com/api/v10/channels/${channelId}/messages`;
 
     const form = new FormData();
 
@@ -467,7 +466,7 @@ form.append(
 );
 
 const response = await fetch(url, {
-  method,
+  method: 'POST',
   headers: {
     Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
   },
@@ -488,8 +487,39 @@ const response = await fetch(url, {
 
     const messageId = data.id;
 
-    // Give every player for this game
-    // the same Discord message ID.
+    // Remove the previous scoreboard message after
+// successfully posting the new updated one.
+if (
+  existingMessageId &&
+  existingMessageId !== messageId
+) {
+  const deleteUrl =
+    `https://discord.com/api/v10/channels/${channelId}/messages/${existingMessageId}`;
+
+  const deleteResponse =
+    await fetch(deleteUrl, {
+      method: 'DELETE',
+      headers: {
+        Authorization:
+          `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      },
+    });
+
+  if (
+    !deleteResponse.ok &&
+    deleteResponse.status !== 404
+  ) {
+    console.error(
+      '❌ Failed to delete old Discord game message:',
+      deleteResponse.status
+    );
+  } else {
+    console.log(
+      '🗑️ Old Discord game message removed:',
+      existingMessageId
+    );
+  }
+}
     gamePlayers.forEach((player) => {
       const gameResult =
         player.results?.[gameId];
@@ -505,7 +535,7 @@ const response = await fetch(url, {
 
     console.log(
       existingMessageId
-        ? `✅ Discord game message updated: ${messageId}`
+        ? `✅ Discord game message reposted: ${messageId}`
         : `✅ Discord game message posted: ${messageId}`
     );
 
@@ -548,7 +578,7 @@ app.post(
 
 app.use(express.json());
 
-app.post('/api/token', async (req, res) => {
+app.post(['/api/token', '/token'], async (req, res) => {
   const { code } = req.body;
 
   if (!code) {
@@ -592,7 +622,7 @@ app.post('/api/token', async (req, res) => {
   }
 });
 
-app.post('/api/player', async (req, res) => {
+app.post(['/api/player', '/player'], async (req, res) => {
   const { accessToken, guildId } = req.body;
 
   if (!accessToken) {
@@ -657,7 +687,7 @@ app.post('/api/player', async (req, res) => {
   }
 });
 
-app.post('/api/result', async (req, res) => {
+app.post(['/api/result', '/result'], async (req, res) => {
   const {
     accessToken,
     guildId,
@@ -875,7 +905,7 @@ if (channelId) {
   }
 });
 
-app.get('/api/leaderboard', async (req, res) => {
+app.get(['/api/leaderboard', '/leaderboard'], async (req, res) => {
   const { guildId, gameId } = req.query;
 
   if (!guildId || !gameId) {

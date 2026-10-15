@@ -379,9 +379,11 @@ useEffect(() => {
 
   const [showDashboard, setShowDashboard] = useState(false);
   const [showError, setShowError] = useState(false);
-  const [showModal, setShowModal] = useState(false); // false | won | lost
+  const [showModal, setShowModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
 
+  const [chooseId, setChooseId] = useState('');
+  const [chooseError, setChooseError] = useState(false);
   const [colorScheme, setColorScheme] = useState(
     LS.getItem(`${KEY_PREFIX}colorScheme`) || 'auto',
   );
@@ -1600,12 +1602,83 @@ const getMedal = (index) => {
               ? '😭😭😭'
               : '🐯🐯🐯'}
           </h2>
-          {showModal === 'play' && (
-            <p class="block">
-              {t('ui.idiomId')}{' '}
-              <CodeInput code={currentGame.id} url={permalink} />
-            </p>
-          )}
+          {showModal === 'choose' && (
+  <div class="block">
+    <h3>Choose Chengyu</h3>
+
+    <p>
+      Enter an Idiom ID
+    </p>
+
+    <input
+      type="text"
+      value={chooseId}
+      placeholder="e.g. 19FrIS"
+      onInput={(e) => {
+        setChooseId(e.currentTarget.value);
+        setChooseError(false);
+      }}
+      style={{
+        width: '100%',
+        boxSizing: 'border-box',
+        padding: '10px 12px',
+        marginBottom: '10px',
+        borderRadius: '8px',
+        fontSize: '16px',
+      }}
+    />
+
+    {chooseError && (
+      <p
+        style={{
+          color: '#ed4245',
+          marginTop: '4px',
+        }}
+      >
+        Invalid Idiom ID
+      </p>
+    )}
+
+    <button
+      type="button"
+      class="strong"
+      onClick={() => {
+        let id = chooseId.trim();
+
+        try {
+          const url = new URL(id);
+
+          if (url.hash) {
+            id = url.hash.slice(1);
+          }
+        } catch (e) {}
+
+        const game = GAMES.find(
+          (g) => g.id === id
+        );
+
+        if (!game) {
+          setChooseError(true);
+          return;
+        }
+
+        location.hash = `#${game.id}`;
+
+        setChooseId('');
+        setChooseError(false);
+        setShowModal(null);
+
+        fireEvent('Game load: Idiom ID');
+      }}
+    >
+      <PlayIcon
+        width={20}
+        height={20}
+      />{' '}
+      PLAY
+    </button>
+  </div>
+)}
           {/(won|lost)/i.test(showModal) && (
             <>
               <p class="block">
@@ -1781,39 +1854,32 @@ const getMedal = (index) => {
               <button
                 type="button"
                 onClick={() => {
-                  fireEvent('Click: Random');
-                  const yes = confirm(t('ui.confirmRandom'));
-                  if (yes) {
-                    const rand = Math.round(Math.random() * (GAMES.length - 1));
-                    const randGame = GAMES[rand];
-                    location.hash = `#${randGame.id}`;
-                    setShowModal(null);
-                    fireEvent('Game load: Random');
-                  }
-                }}
+  fireEvent('Click: Random');
+
+  const rand = Math.floor(
+    Math.random() * GAMES.length
+  );
+
+  const randGame = GAMES[rand];
+
+  location.hash = `#${randGame.id}`;
+
+  setShowModal(null);
+
+  fireEvent('Game load: Random');
+}}
               >
                 <PlayIcon width={20} height={20} /> {t('common.random')}
               </button>{' '}
               <button
                 type="button"
-                onClick={() => {
-                  fireEvent('Click: Idiom ID');
-                  // Ask user for idiom ID, load game if ID is valid
-                  let id = prompt(t('ui.promptIdiom'));
-                  try {
-                    id = new URL(id).hash.slice(1);
-                  } catch (e) {}
-                  if (id) {
-                    const game = GAMES.find((g) => g.id === id);
-                    if (game) {
-                      location.hash = `#${game.id}`;
-                      setShowModal(null);
-                      fireEvent('Game load: Idiom ID');
-                    } else {
-                      alert('Invalid idiom ID');
-                    }
-                  }
-                }}
+               onClick={() => {
+  fireEvent('Click: Idiom ID');
+
+  setChooseId('');
+  setChooseError(false);
+  setShowModal('choose');
+}}
               >
                 <PlayIcon width={20} height={20} /> {t('common.choose')}
               </button>
