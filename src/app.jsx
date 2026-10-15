@@ -381,6 +381,8 @@ useEffect(() => {
   const [showError, setShowError] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [practiceGameId, setPracticeGameId] =
+  useState(null);
 
   const [chooseId, setChooseId] = useState('');
   const [chooseError, setChooseError] = useState(false);
@@ -418,7 +420,9 @@ useEffect(() => {
   }, []);
 
   const serverResult =
-  discordPlayer?.results?.[currentGame.id] || null;
+  practiceGameId === currentGame.id
+    ? null
+    : discordPlayer?.results?.[currentGame.id] || null
 
   const serverGameState =
   serverResult?.result === 'won' ||
@@ -1658,9 +1662,17 @@ const getMedal = (index) => {
         );
 
         if (!game) {
-          setChooseError(true);
-          return;
-        }
+  setChooseError(true);
+  return;
+}
+
+setPracticeGameId(game.id);
+
+LS.removeItem(
+  `${KEY_PREFIX}${game.id}`
+);
+
+location.hash = `#${game.id}`;
 
         location.hash = `#${game.id}`;
 
@@ -1861,6 +1873,12 @@ const getMedal = (index) => {
   );
 
   const randGame = GAMES[rand];
+
+  setPracticeGameId(randGame.id);
+
+LS.removeItem(
+  `${KEY_PREFIX}${randGame.id}`
+);
 
   location.hash = `#${randGame.id}`;
 
