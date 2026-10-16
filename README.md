@@ -1,5 +1,7 @@
 # Chengyu Wordle
 
+Pull directly: https://discord.com/oauth2/authorize?client_id=1560157217565446154 
+
 > Wordle, for Chinese idioms - 成语 (chéngyǔ)
 >
 > Guess the idiom in 6 tries. 
